@@ -502,6 +502,16 @@ var (
 		RbacConfig,
 		ClusterRbacConfig,
 	}
+
+	//For now, Copilot doesn't send all the config types in IstioConfigTypes
+	//and that prevents pilot from starting properly, for now, make Pilot's startup
+	//contingent only on the config types that copilot sends
+	MCPConfigTypeSubset = ConfigDescriptor{
+		VirtualService,
+		Gateway,
+		ServiceEntry,
+		DestinationRule,
+	}
 )
 
 // ResolveHostname produces a FQDN based on either the service or

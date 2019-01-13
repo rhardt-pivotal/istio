@@ -35,12 +35,12 @@ import (
 	"github.com/gogo/protobuf/types"
 	middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
-	multierror "github.com/hashicorp/go-multierror"
+	"github.com/hashicorp/go-multierror"
 	prom "github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -463,6 +463,7 @@ func (s *Server) initMixerSan(args *PilotArgs) error {
 }
 
 func (s *Server) getKubeCfgFile(args *PilotArgs) string {
+	log.Warnf("getKubeCfgFile, returning: %v", args.Config.KubeConfig)
 	return args.Config.KubeConfig
 }
 
@@ -494,8 +495,8 @@ func (c *mockController) Run(<-chan struct{}) {}
 
 func (s *Server) initMCPConfigController(args *PilotArgs) error {
 	clientNodeID := ""
-	supportedTypes := make([]string, len(model.IstioConfigTypes))
-	for i, model := range model.IstioConfigTypes {
+	supportedTypes := make([]string, len(model.MCPConfigTypeSubset))
+	for i, model := range model.MCPConfigTypeSubset {
 		supportedTypes[i] = fmt.Sprintf("type.googleapis.com/%s", model.MessageName)
 	}
 
@@ -608,6 +609,18 @@ func (s *Server) initMCPConfigController(args *PilotArgs) error {
 		configStores = append(configStores, mcpController)
 	}
 
+	//in addition to the remote config sources, we also want to grab config from our local K8s API
+	//otherwise remote and local config sources are mutually exclusive -
+	//create the k8s controller and add it to the list of config stores
+	kConfigStore, err := s.makeKubeConfigController(args)
+	if err != nil {
+		log.Errorf("Unable to create addl. kubecfg controller: %v", err)
+		cancel()
+		return err
+	}
+	log.Warnf("*** IN makeMCP, appending the k8s config controller: %v", kConfigStore)
+	configStores = append(configStores, kConfigStore)
+
 	// TODO: remove the below branch when `--mcpServerAddrs` removed
 	if len(configStores) == 0 {
 		for _, addr := range args.MCPServerAddrs {
@@ -709,12 +722,15 @@ func (s *Server) initMCPConfigController(args *PilotArgs) error {
 // initConfigController creates the config controller in the pilotConfig.
 func (s *Server) initConfigController(args *PilotArgs) error {
 	if len(args.MCPServerAddrs) > 0 || len(s.mesh.ConfigSources) > 0 {
+		log.Info("Using Config Sources")
 		if err := s.initMCPConfigController(args); err != nil {
 			return err
 		}
 	} else if args.Config.Controller != nil {
+		log.Info("Using Controller")
 		s.configController = args.Config.Controller
 	} else if args.Config.FileDir != "" {
+		log.Info("Using Config File")
 		store := memory.Make(model.IstioConfigTypes)
 		configController := memory.NewController(store)
 
@@ -725,6 +741,7 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 
 		s.configController = configController
 	} else {
+		log.Info("Using KubeConfig Controller")
 		controller, err := s.makeKubeConfigController(args)
 		if err != nil {
 			return err
@@ -766,11 +783,14 @@ func (s *Server) initConfigController(args *PilotArgs) error {
 
 	// Create the config store.
 	s.istioConfigStore = model.MakeIstioStore(s.configController)
+	log.Warnf("config store: %v", s.istioConfigStore)
 
 	return nil
 }
 
 func (s *Server) makeKubeConfigController(args *PilotArgs) (model.ConfigStoreCache, error) {
+	log.Warn("In makeKubeConfigController")
+	log.Warnf("Args: %v", args)
 	kubeCfgFile := s.getKubeCfgFile(args)
 	configClient, err := crd.NewClient(kubeCfgFile, "", model.IstioConfigTypes, args.Config.ControllerOptions.DomainSuffix)
 	if err != nil {
@@ -782,7 +802,7 @@ func (s *Server) makeKubeConfigController(args *PilotArgs) (model.ConfigStoreCac
 			return nil, multierror.Prefix(err, "failed to register custom resources.")
 		}
 	}
-
+	log.Warnf("new controller - clinent %v, options %v", configClient, args.Config.ControllerOptions)
 	return crd.NewController(configClient, args.Config.ControllerOptions), nil
 }
 

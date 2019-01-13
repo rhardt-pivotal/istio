@@ -57,10 +57,13 @@ type Controller struct {
 }
 
 // NewController provides a new CoreDataModel controller
+//For now, Copilot doesn't send all the config types in model.IstioConfigTypes
+//and that prevents pilot from starting properly, for now, make Pilot's startup
+//contingent only on the config types that copilot sends
 func NewController(options Options) CoreDataModel {
-	descriptorsByMessageName := make(map[string]model.ProtoSchema, len(model.IstioConfigTypes))
+	descriptorsByMessageName := make(map[string]model.ProtoSchema, len(model.MCPConfigTypeSubset))
 	synced := make(map[string]bool)
-	for _, descriptor := range model.IstioConfigTypes {
+	for _, descriptor := range model.MCPConfigTypeSubset {
 		// don't register duplicate descriptors for the same message name, e.g. auth policy
 		if _, ok := descriptorsByMessageName[descriptor.MessageName]; !ok {
 			descriptorsByMessageName[descriptor.MessageName] = descriptor
